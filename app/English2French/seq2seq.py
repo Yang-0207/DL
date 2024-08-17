@@ -1,21 +1,17 @@
-from io import open
-# 用于字符规范化
-import unicodedata
-import re
 import random
 import torch
 import torch.nn as nn
 
 import time
-import math
 
 import matplotlib.pyplot as plt
 
 # 导入优化方法的工具包
 from torch import optim
 
-from app.English2French.lang import Lang
+from app.English2French.lang import Lang, readLangs
 from app.English2French.rnn import EncoderRNN, DecoderRNN, AttnDecoderRNN
+from app.English2French.utils import timeSince
 
 # 设备选择，可以选择在GPU上运行或者在CPU上运行
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -34,6 +30,10 @@ data_path = '../../data/tutorial/eng-fra.txt'
 # 设置组成句子中单词或标点的最多个数
 MAX_LENGTH = 10
 
+
+# 设定 teacher_forcing 的比率，在大多数的概率下使用这个策略进行训练
+teacher_forcing_ratio = 0.5
+
 # 选择带有指定前缀的英文源语言的语句数据作为训练数据
 eng_prefixes = (
     "i am ", "i m",
@@ -43,38 +43,6 @@ eng_prefixes = (
     "we are", "we re ",
     "they are", "they re "
 )
-
-
-# 将 unicode 字符串转换为 ASCII 字符串，主要用于将法文的重音符号去除掉
-def unicodeToAscii(s):
-    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
-
-
-def normalizeString(s):
-    """字符串规范化函数"""
-    # 使字符串转变为小写并去除掉两侧的空白符，再调用上面的函数转换为ASCII字符串
-    s = unicodeToAscii(s.lower().strip())
-    # 在.！？前面加一个空格
-    s = re.sub(r"([.!?])", r" \1", s)
-    # 使用正则表达式将字符串中不是大小写字符和正常标点符号的全部替换为空格
-    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
-    return s
-
-
-def readLangs(lang1, lang2):
-    """
-    读取原始数据并实例化源语言 + 目标语言的类对象
-    :param lang1:
-    :param lang2:
-    :return:
-    """
-    lines = open(data_path, encoding='utf-8').read().strip().split('\n')
-    # 对lines列表中的句子进行标准化处理，并以 \t 进行再次划分，形成子列表
-    pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
-    # 直接初始化两个类对象
-    input_lang = Lang(lang1)
-    output_lang = Lang(lang2)
-    return input_lang, output_lang, pairs
 
 
 def filterPair(pair):
@@ -140,46 +108,6 @@ def tensorsFromPair(pair):
     input_tensor = tensorFromSentence(input_lang, pair[0])
     output_tensor = tensorFromSentence(output_lang, pair[1])
     return (input_tensor, output_tensor)
-
-
-pair_tensor = tensorsFromPair(pairs[0])
-
-# print(pair_tensor)
-
-
-hidden_size = 25
-input_size = 20
-output_size = 10
-input1 = pair_tensor[0][0]
-hidden = torch.zeros(1, 1, hidden_size)
-
-encoder = EncoderRNN(input_size, hidden_size)
-output, hidden = encoder(input1, hidden)
-print(output)
-print(output.shape)
-
-decoder = DecoderRNN(hidden_size, output_size)
-output, hidden = decoder(input1, hidden)
-print(output)
-print(output.shape)
-
-hidden_size = 25
-output_size = 10
-input1 = pair_tensor[0][0]
-hidden = torch.zeros(1, 1, hidden_size)
-encoder_output = torch.randn(10, 25)
-
-decoder_attn = AttnDecoderRNN(hidden_size, output_size)
-output, hidden, attn_weights = decoder_attn(input1, hidden, encoder_output)
-
-# print(output)
-# print(output.shape)
-# print(hidden.shape)
-# print(attn_weights)
-# print(attn_weights.shape)
-
-# 设定 teacher_forcing 的比率，在大多数的概率下使用这个策略进行训练
-teacher_forcing_ratio = 0.5
 
 
 def train(input_tensor, target_tensor, encoder, decoder,
@@ -255,28 +183,6 @@ def train(input_tensor, target_tensor, encoder, decoder,
     return loss.item() / target_length
 
 
-def timeSince(since):
-    """
-    获得每次打印的训练耗时
-    :param since: 训练开始的时间
-    :return:
-    """
-    now = time.time()
-    # 计算得到一个时间差
-    s = now - since
-    # 将s转化为分钟，秒的形式
-    m = math.floor(s / 60)
-    s -= m * 60
-    # 按照指定的格式返回时间差
-    return '%dm %ds' % (m, s)
-
-
-since = time.time() - 620
-
-period = timeSince(since)
-print(period)
-
-
 def trainIter(encoder, decoder, n_iters, print_every=1000, plot_every=100, learning_rate=0.01):
     """
     :param encoder: 编码器的实例化对象
@@ -303,6 +209,9 @@ def trainIter(encoder, decoder, n_iters, print_every=1000, plot_every=100, learn
     criterion = nn.NLLLoss()
 
     # 按照设定的总迭代次数进行迭代训练
+
+    print(' %s     %s    %s  %s' % ("耗时", "轮次", "进度", "平均损失"))
+
     for iter in range(1, n_iters + 1):
         # 从每次语言对的列表中随机抽取一条样本作为本轮迭代的训练数据
         training_pair = tensorsFromPair(random.choice(pairs))
@@ -322,7 +231,7 @@ def trainIter(encoder, decoder, n_iters, print_every=1000, plot_every=100, learn
             # 为了下一个打印间隔的累加，这里将累加器清零
             print_loss_total = 0
             # 打印若干信息
-            print('%s (%d %d%%) %.4f' % (timeSince(start), iter, iter / n_iters * 100, print_loss_avg))
+            print('%s   %d   %d%%    %.4f' % (timeSince(start), iter, iter / n_iters * 100, print_loss_avg))
 
         # 如果到达了绘制损失曲线的轮次
         if iter % plot_every == 0:
@@ -407,7 +316,6 @@ def evaluate(encoder, decoder, sentence, max_length=MAX_LENGTH):
 
 def evaluateRandomly(encoder, decoder, n=6):
     """
-
     :param encoder:
     :param decoder:
     :param n:
@@ -421,6 +329,12 @@ def evaluateRandomly(encoder, decoder, n=6):
         output_sentence = ' '.join(output_words)
         print('<', output_sentence)
         print(' ')
+
+
+def translate(sentence):
+    output_words, attention = evaluate(encoder, attn_decoder, sentence)
+    output_sentence = ' '.join(output_words)
+    return output_sentence, attention
 
 
 if __name__ == '__main__':
@@ -441,8 +355,9 @@ if __name__ == '__main__':
 
     # 使用
     sentence = "we re both teachers ."
-    output_words, attention = evaluate(encoder, attn_decoder, sentence)
-    print(output_words)
+    output_sentence, attention = translate(sentence)
+    print(output_sentence)
+
     plt.figure()
     plt.matshow(attention.numpy())
     plt.savefig("./s2s_attn.png")

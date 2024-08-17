@@ -1,3 +1,10 @@
+import re
+# 用于字符规范化
+import unicodedata
+from io import open
+
+data_path = '../../data/tutorial/eng-fra.txt'
+
 class Lang():
     """语言类"""
     def __init__(self, name):
@@ -33,3 +40,33 @@ class Lang():
         """
         for word in sentence.split(' '):
             self.addWord(word)
+
+
+def readLangs(lang1, lang2):
+    """
+    读取原始数据并实例化源语言 + 目标语言的类对象
+    :param lang1:
+    :param lang2:
+    :return:
+    """
+    lines = open(data_path, encoding='utf-8').read().strip().split('\n')
+    # 对lines列表中的句子进行标准化处理，并以 \t 进行再次划分，形成子列表
+    pairs = [[normalizeString(s) for s in l.split('\t')] for l in lines]
+    # 直接初始化两个类对象
+    input_lang = Lang(lang1)
+    output_lang = Lang(lang2)
+    return input_lang, output_lang, pairs
+
+def normalizeString(s):
+    """字符串规范化函数"""
+    # 使字符串转变为小写并去除掉两侧的空白符，再调用上面的函数转换为ASCII字符串
+    s = unicodeToAscii(s.lower().strip())
+    # 在.！？前面加一个空格
+    s = re.sub(r"([.!?])", r" \1", s)
+    # 使用正则表达式将字符串中不是大小写字符和正常标点符号的全部替换为空格
+    s = re.sub(r"[^a-zA-Z.!?]+", r" ", s)
+    return s
+
+# 将 unicode 字符串转换为 ASCII 字符串，主要用于将法文的重音符号去除掉
+def unicodeToAscii(s):
+    return ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
